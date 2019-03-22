@@ -29,3 +29,6 @@ accuracyMax = 1.0
 
 # Maximum iterations for iterative classification trainers
 max_iter = 3000
+
+# Class separation (for synthetic data generation)
+class_sep = 2

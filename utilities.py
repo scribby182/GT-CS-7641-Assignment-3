@@ -2,18 +2,21 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.ticker import MaxNLocator
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 import math
 from time import perf_counter
 import pickle
 import copy
 import os
+from collections import Counter
 import itertools
 
 from sklearn.model_selection import KFold, StratifiedKFold, cross_validate, train_test_split
 from sklearn.metrics import confusion_matrix
+from sklearn.metrics import accuracy_score
 
 
-def drawSketch(x, y = None, rows = 28, cols = 28, cmap='gray_r', ax = None, scale = None, savefig = False):
+def drawSketch(x, y = None, rows = 28, cols = 28, cmap='gray_r', ax = None, scale = None, colorbar=False, savefig = False):
     """
     Draw the greyscale image specified by the 1D vector x on the axes ax
     
@@ -39,9 +42,14 @@ def drawSketch(x, y = None, rows = 28, cols = 28, cmap='gray_r', ax = None, scal
     if scale is not None:
         x = x * scale
 
-    ax.imshow(x, cmap=cmap)
+    im = ax.imshow(x, cmap=cmap)
     if y is not None:
         ax.text(rows * 0.1, cols * 0.1, str(y), color='r')
+
+    if colorbar:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        ax.get_figure().colorbar(im, cax=cax)
 
     if savefig:
         ax.get_figure().savefig(savefig)
@@ -548,7 +556,7 @@ def drawIncorrectSketches(X, yTrue, yPred, classNumbers, names, n = 5, randomSee
 
     return fig
 
-def heatmap(data, xticklabels, yticklabels, xlabel = "", ylabel = "", textcolor = "red", fontsize = None, cmap = 'Greys', savefig = False, ax = None):
+def heatmap(data, xticklabels, yticklabels, xlabel = "", ylabel = "", title=None, textcolor = "red", fontsize = None, cmap = 'Greys', savefig = False, ax = None):
     """
     Return a basic labelled heatmap of the numberic data, with data[0,0] placed in the upper left
     
@@ -580,6 +588,9 @@ def heatmap(data, xticklabels, yticklabels, xlabel = "", ylabel = "", textcolor 
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
 
+    if title:
+        ax.set_title(title)
+
     if savefig:
         fig.savefig(savefig)
 
@@ -599,7 +610,7 @@ def df_to_heatmap(df, x_variable, y_variable, z_variable, **kwargs):
         for x_i, x_val in enumerate(x_labels):
             mask = (df.loc[:, x_variable] == x_val)  & (df.loc[:, y_variable] == y_val)
             toPlot[y_i, x_i] = df.loc[mask, z_variable]
-    heatmap(toPlot, x_labels, y_labels, **kwargs)
+    return heatmap(toPlot, x_labels, y_labels, **kwargs)
 
 def reconstruction_error(X, transformer):
     X_transformed = transformer.transform(X)
@@ -624,7 +635,7 @@ def get_pca_components_for_var(pca, var):
 
 def plot_pca_components(x, coefficients=None, pca=None, scaler=None, cmap='gray_r',
                         imshape=(28, 28), fontsize=12, plot_step=1, last_component=None,
-                        show_mean=True):
+                        show_mean=True, far_left_label=None):
     """
     Modified from: https://jakevdp.github.io/PythonDataScienceHandbook/06.00-figure-code.html#Digits-PCA-Components
     """
@@ -665,7 +676,8 @@ def plot_pca_components(x, coefficients=None, pca=None, scaler=None, cmap='gray_
     if scaler:
         x = scaler.inverse_transform(x)
 
-    show(slice(2), slice(2), x, title={'label': "True", 'fontsize': fontsize})
+    show(slice(2), slice(2), x, title={'label': "True", 'fontsize': fontsize}, 
+         ylabel={'ylabel': far_left_label, 'fontsize': fontsize})
     
     approx = mean.copy()
     
@@ -675,11 +687,14 @@ def plot_pca_components(x, coefficients=None, pca=None, scaler=None, cmap='gray_
         show(1, 2, approx, title={'label': r'$Var_{Explained}=$', 'fontsize': fontsize})
         counter += 1
 
-        
-    evrc = np.cumsum(pca.explained_variance_ratio_)
+    # Try in case I plot ICA or others with this instead of PCA
+    try:
+        evrc = np.cumsum(pca.explained_variance_ratio_)
+    except:
+        evrc = None
     i_plot = 0
     first_plot = True
-    for i in range(last_component):
+    for i in range(last_component+1):
         temp = coefficients[i] * components[i]
         approx = approx + temp
         if i in to_plot:
@@ -703,8 +718,12 @@ def plot_pca_components(x, coefficients=None, pca=None, scaler=None, cmap='gray_
             show(0, i_plot + counter, components[i], 
                 title={'label': f'$c_{{{i}}}$', 'fontsize': fontsize}, 
                 ylabel={'ylabel': ylabel_top, 'fontsize': fontsize - 1})
+            try:
+                this_title = f'{evrc[i]:.2f}'
+            except TypeError:
+                this_title = None
             show(1, i_plot + counter, this_approx,
-                 title={'label': f'{evrc[i]:.2f}', 'fontsize': fontsize},
+                 title={'label': this_title, 'fontsize': fontsize},
                  ylabel={'ylabel': ylabel_bot, 'fontsize': fontsize - 1},
                  xlabel={'xlabel': xlabel_bot, 'fontsize': fontsize - 1},
                  )
@@ -750,3 +769,49 @@ def get_max_along_df_axis(df, variable_to_max, variable_to_max_along):
         mask = df.loc[:, variable_to_max_along] == x_val
         scores[x_i] = (x_val, df.loc[mask, variable_to_max].max())
     return scores
+
+# def get_max_along_df_axis(df, variable_to_max, variable_to_max_along):
+#     """
+#     Returns the slice of a dataframe that has the maximum value of a variable for each instance of a second variable
+
+#     eg: [max(y) for all y where x=x1, max(y) for all y where x=x2, ...]
+
+#     :return: Numpy array with columns of x_val, max(y|x_val)
+#     """
+#     x_labels = df.loc[:, variable_to_max_along].unique()
+#     scores = np.zeros((len(x_labels), 2))
+#     for x_i, x_val in enumerate(sorted(x_labels)):
+#         mask = df.loc[:, variable_to_max_along] == x_val
+#         scores[x_i] = (x_val, df.loc[mask, variable_to_max].max())
+#     return scores
+
+def get_vals_along_df_axis(df, variable_to_get, variable_to_max_along):
+    """
+    Returns the slice of a dataframe that has the maximum value of a variable for each instance of a second variable
+
+    eg: [max(y) for all y where x=x1, max(y) for all y where x=x2, ...]
+
+    :return: Numpy array with columns of x_val, max(y|x_val)
+    """
+    x_labels = df.loc[:, variable_to_max_along].unique()
+    scores = []
+    # scores = np.zeros((len(x_labels), 2))
+    for x_val in x_labels:
+    # for x_i, x_val in enumerate(sorted(x_labels)):
+        mask = df.loc[:, variable_to_max_along] == x_val
+        scores.append((x_val, this_val) for this_val in df.loc[mask, variable_to_get])
+        # scores[x_i] = (x_val, df.loc[mask, variable_to_max].max())
+    return scores
+
+def cluster_acc(Y,clusterLabels):
+    "From https://github.com/JonathanTay/CS-7641-assignment-3"
+    assert (Y.shape == clusterLabels.shape)
+    pred = np.empty_like(Y)
+    for label in set(clusterLabels):
+        mask = clusterLabels == label
+        sub = Y[mask]
+        target = Counter(sub).most_common(1)[0][0]
+        pred[mask] = target
+#    assert max(pred) == max(Y)
+#    assert min(pred) == min(Y)    
+    return accuracy_score(Y,pred)
